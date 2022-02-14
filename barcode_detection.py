@@ -1,52 +1,93 @@
 # coding=utf-8
 
-# Import Libraries
-import argparse
-import read_parser as ap
+from argparse import ArgumentParser
+import read_parser
 
 
-def main():
-    # Create argument parser
-    argument_parser = argparse.ArgumentParser(description='umiPore2 - identify unique molecular barcodes in Nanopore sequences.')
+def main(args):
+    fasta_file = args.fasta_file
+    tracer_info_file = args.tracer_info_file
+    sample_id = args.sample_id
+    project_id = args.project_id
 
-    # Add arguments
-    argument_parser.add_argument('-f', '--fasta', required=True,
-                                 help='reads matching to a reference sequence in fasta format')
-    argument_parser.add_argument('-b', '--barcodes', required=True,
-                                 help='text file with a list of used experiment or sample barcodes')
-    argument_parser.add_argument('-s', '--sample_name', required=True,
-                                 help='sample name')
-    argument_parser.add_argument('-e', '--experiment_name', required=True,
-                                 help='experiment name')
+    tracer_assignments = read_parser.TracerAssignment(fasta_file, tracer_info_file)
 
-    # Retrieve arguments
+    # Output Tracer and UMI frequency
+    with open(args.output_tracer_counts, "w+") as f:
+        f.write(
+            "sample_id\tproject_id\tlab_tracer_id\te_id_sequence\ttotal_reads\tunique_UMIs\n"
+        )
+        for tracer_sequence in tracer_assignments.tracers:
+            tracer_id = tracer_assignments.tracer_sequence_to_id[tracer_sequence]
+
+            if tracer_sequence in tracer_assignments.tracer_frequency:
+                f.write(
+                    "{}\t{}\t{}\t{}\t{}\t{}\n".format(
+                        sample_id,
+                        project_id,
+                        tracer_id,
+                        tracer_sequence,
+                        tracer_assignments.tracer_frequency[tracer_sequence],
+                        len(tracer_assignments.tracers[tracer_sequence]),
+                    )
+                )
+            else:
+                f.write(
+                    "{}\t{}\t{}\t{}\t{}\t{}\n".format(
+                        sample_id,
+                        project_id,
+                        tracer_id,
+                        tracer_sequence,
+                        0,
+                        len(tracer_assignments.tracers[tracer_sequence]),
+                    )
+                )
+
+
+if __name__ == "__main__":
+    argument_parser = ArgumentParser(
+        description="Identify unique molecular barcodes in sequences aligning to a backbone template"
+    )
+
+    argument_parser.add_argument(
+        "-f",
+        "--fasta_file",
+        type=str,
+        required=True,
+        help="High quality reads aligning to the tracer backbone reference sequence in fasta format",
+    )
+    argument_parser.add_argument(
+        "-t",
+        "--tracer_info_file",
+        type=str,
+        required=True,
+        help="TSV file with columns lab_tracer_id, e_id_sequence",
+    )
+    argument_parser.add_argument(
+        "-s",
+        "--sample_id",
+        type=str,
+        required=True,
+        help="Sample ID",
+    )
+    argument_parser.add_argument(
+        "-p",
+        "--project_id",
+        type=str,
+        required=True,
+        help="Project ID",
+    )
+    argument_parser.add_argument(
+        "-o",
+        "--output_tracer_counts",
+        type=str,
+        required=True,
+        help="Output TSV file to write tracer counts to",
+    )
+
     args = argument_parser.parse_args()
 
-    # Get input file, output file and output directory
-    infile = args.fasta
-    barcode_file = args.barcodes
-    sample_name = args.sample_name
-    experiment_name = args.experiment_name
-
-    # Parse fasta files
-    parser = ap.Barcode(infile, barcode_file)
-    parser.parse_reads()
-
-    # Print output header
-    print("sample_name\texperiment_name\tbarcode_name\tbarcode_sequence\ttotal_reads\tunique_UMIs")
-
-    # Print Barcode and UMI frequency
-    for x in parser.samples:
-        barcode_name = parser.sample_barcodes[x]
-
-        if x in parser.barcode_frequency:
-            print(sample_name + "\t" + experiment_name + "\t" + barcode_name + "\t" + x + "\t" + str(parser.barcode_frequency[x]) + "\t" + str(len(parser.samples[x])))
-        else:
-            print(sample_name + "\t" + experiment_name + "\t" + barcode_name + "\t" + x + "\t" + "0" + "\t" + str(len(parser.samples[x])))
-
-
-# Run program
-main()
+    main(args)
 
 
 """
