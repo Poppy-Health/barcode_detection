@@ -5,12 +5,15 @@ import read_parser
 
 
 def main(args):
-    fasta_file = args.fasta_file
-    tracer_info_file = args.tracer_info_file
     sample_id = args.sample_id
     project_id = args.project_id
+    fasta_file = args.fasta_file
+    template_idt_file = args.template_idt_file
+    tracer_info_file = args.tracer_info_file
+    output_tracer_counts = args.output_tracer_counts
+    output_umi_counts = args.output_umi_counts
 
-    tracer_assignments = read_parser.TracerAssignment(fasta_file, tracer_info_file)
+    tracer_assignments = read_parser.TracerAssignment(fasta_file, template_idt_file, tracer_info_file)
 
     # Output Tracer and UMI frequency
     with open(args.output_tracer_counts, "w+") as f:
@@ -31,17 +34,15 @@ def main(args):
                         len(tracer_assignments.tracers[tracer_sequence]),
                     )
                 )
-            else:
-                f.write(
-                    "{}\t{}\t{}\t{}\t{}\t{}\n".format(
-                        sample_id,
-                        project_id,
-                        tracer_id,
-                        tracer_sequence,
-                        0,
-                        len(tracer_assignments.tracers[tracer_sequence]),
-                    )
-                )
+
+    if output_umi_counts:
+        with open(output_umi_counts, "w+") as f:
+            f.write("lab_tracer_id\tumi_sequence\tcount")
+            for tracer, umis in tracer_assignments.tracers.items():
+                tracer_id = tracer_assignments.tracer_sequence_to_id[tracer_sequence]
+                for umi_sequence, count in umis.items():
+                    f.write("{}\t{}\t{}\n".format(tracer_id, umi_sequence, count))
+
 
 
 if __name__ == "__main__":
@@ -49,20 +50,7 @@ if __name__ == "__main__":
         description="Identify unique molecular barcodes in sequences aligning to a backbone template"
     )
 
-    argument_parser.add_argument(
-        "-f",
-        "--fasta_file",
-        type=str,
-        required=True,
-        help="High quality reads aligning to the tracer backbone reference sequence in fasta format",
-    )
-    argument_parser.add_argument(
-        "-t",
-        "--tracer_info_file",
-        type=str,
-        required=True,
-        help="TSV file with columns lab_tracer_id, e_id_sequence",
-    )
+
     argument_parser.add_argument(
         "-s",
         "--sample_id",
@@ -78,11 +66,39 @@ if __name__ == "__main__":
         help="Project ID",
     )
     argument_parser.add_argument(
+        "-f",
+        "--fasta_file",
+        type=str,
+        required=True,
+        help="High quality reads aligning to the tracer backbone reference sequence in fasta format",
+    )
+    argument_parser.add_argument(
+        "-r",
+        "--template_idt_file",
+        type=str,
+        required=True,
+        help="Reference template IDT sequence in fasta format. Should contain a single fasta sequence. First block of Ns should correspond to the location of the UMI region, second block of Ns should correspond to the location of the tracer region.",
+    )
+    argument_parser.add_argument(
+        "-t",
+        "--tracer_info_file",
+        type=str,
+        required=True,
+        help="TSV file with columns lab_tracer_id, e_id_sequence",
+    )
+    argument_parser.add_argument(
         "-o",
         "--output_tracer_counts",
         type=str,
         required=True,
         help="Output TSV file to write tracer counts to",
+    )
+    argument_parser.add_argument(
+        "-u",
+        "--output_umi_counts",
+        type=str,
+        required=False,
+        help="Output TSV file to write UMI sequence and counts for each tracer to (columns lab_tracer_id, umi_sequence, count)"
     )
 
     args = argument_parser.parse_args()

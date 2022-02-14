@@ -1,13 +1,16 @@
 from Levenshtein import distance
+from regex import search
 
 
 class TracerAssignment:
-    def __init__(self, fasta_file, tracer_info_file):
+    def __init__(self, fasta_file, template_idt_file, tracer_info_file):
         self.fasta_file = fasta_file
         self.tracer_info_file = tracer_info_file
         self.tracer_frequency = dict()
         self.tracers = dict()
         self.tracer_sequence_to_id = dict()
+
+        self.flanking_nucleotide_length = 8
 
         # Parse sample tracers from file
         with open(tracer_info_file) as tracer_info_file:
@@ -20,99 +23,183 @@ class TracerAssignment:
 
                     self.tracer_sequence_to_id[tracer_sequence] = tracer_id
                     self.tracers[tracer_sequence] = dict()
+                    self.tracer_frequency[tracer_sequence] = 0
 
+        self._parse_template(template_idt_file)
         self._parse_reads()
+
+    def _parse_template(self, template_idt_file):
+        """
+        Determine the start and end coordinates and flanking sequences of the UMI and Tracer sequence sections of the template
+        """
+        template_sequence = ""
+
+        with open(template_idt_file, "r") as f:
+            for line in f:
+                if line.startswith(">"):
+                    continue
+                else:
+                    template_sequence += line.strip().upper()
+
+        template_match = search(r"(N+)[ATCG]+(N+)", template_sequence)
+
+        try:
+            self.umi_start_coord = template_match.span(1)[0]
+            self.umi_end_coord = template_match.span(1)[1]
+
+            self.tracer_start_coord = template_match.span(2)[0]
+            self.tracer_end_coord = template_match.span(2)[1]
+        except IndexError:
+            raise SystemExit(
+                "Failed to determine UMI and tracer sequence coordinates from template file\nTemplate sequence: [{}]".format(
+                    template_sequence
+                )
+            )
+
+        if (
+            self.tracer_start_coord - self.umi_end_coord
+            < self.flanking_nucleotide_length
+        ):
+            raise SystemExit(
+                "Inferred internal distance between UMI and tracer ID regions is shorter than the flanking nucleotide length. This could produce unexpected results when searching for UMIs/tracers using their flanking backbone sequences (there will be overlap into UMI/tracer ID regions)!\nUMI start coordinate: {}\nUMI end coodinate: {}\nTracer start coordinate: {}\nTracer end coordinate: {}\nBackbone sequence: {}\nFlanking nucleotide length: {}".format(
+                    self.umi_start_coord,
+                    self.umi_end_coord,
+                    self.tracer_start_coord,
+                    self.tracer_end_coord,
+                    template_sequence,
+                    self.flanking_nucleotide_length,
+                )
+            )
+
+        self.umi_left_flank_sequence = template_sequence[
+            self.umi_start_coord
+            - self.flanking_nucleotide_length : self.umi_start_coord
+        ]
+        self.umi_right_flank_sequence = template_sequence[
+            self.umi_end_coord : self.umi_end_coord + self.flanking_nucleotide_length
+        ]
+
+        self.tracer_left_flank_sequence = template_sequence[
+            self.tracer_start_coord
+            - self.flanking_nucleotide_length : self.tracer_start_coord
+        ]
+        self.tracer_right_flank_sequence = template_sequence[
+            self.tracer_end_coord : self.tracer_end_coord
+            + self.flanking_nucleotide_length
+        ]
+
+        self.umi_sequence_length = self.umi_end_coord - self.umi_start_coord
+        self.tracer_sequence_length = self.tracer_end_coord - self.tracer_start_coord
+
 
     # Parse fasta file with high quality alignment reads
     def _parse_reads(self):
-        read_seq = ""
+        read_sequence = ""
 
         with open(self.fasta_file) as f1:
             for line in f1:
                 line = line.rstrip("\n")
 
                 if line.startswith(">"):
-                    # read_name = line[1:]
-                    if read_seq != "":
-                        self.identify_tracers(read_seq)
-                        read_seq = ""
+                    if read_sequence != "":
+                        self._identify_tracers(read_sequence)
+                        read_sequence = ""
 
                 else:
-                    read_seq += line
+                    read_sequence += line
 
-            # Analyse last alignment
-            self.identify_tracers(read_seq)
+            # Flush last alignment
+            self._identify_tracers(read_sequence)
 
     # Screen alignment - quality, tracers etc.
-    def identify_tracers(self, read_seq):
+    def _identify_tracers(self, read_sequence):
+        def _get_umi_sequences(flanking_sequence_length):
+            """
+            Return the umi sequence discovered using the left and righthand flanking regions
+            Args:
+                flanking_sequence_length (int): Number of bases in the flanking range to consider
+            Returns:
+                 (str) umi_left_sequence
+                 (str) umi_right_sequence
+            """
+            umi_left_sequence, umi_right_sequence = (None, None)
 
-        # Find UMI sequence ##############################################################################
-        umi_match_1 = ""
-        umi_match_2 = ""
+            # Find UMI starting from left flank reference-anchor sequence
+            reference_anchor_pos = read_sequence.find(self.umi_left_flank_sequence)
+            if reference_anchor_pos > 0:
+                umi_start_coord_left = reference_anchor_pos + flanking_sequence_length
+                umi_end_coord_left = (
+                    reference_anchor_pos
+                    + flanking_sequence_length
+                    + self.umi_sequence_length
+                )
+                umi_left_sequence = read_sequence[
+                    umi_start_coord_left:umi_end_coord_left
+                ]
 
-        # Find UMI starting from downstream (right) reference-anchor sequence (UMI has length 12)
-        reference_downstream = read_seq.find("ATGGCCCG")
-        if reference_downstream > 0:
-            start_umi = reference_downstream - 12  # subtract exactly the length of UMI
-            end_umi = (
-                reference_downstream  # keep as is: last base in range is excluded!
-            )
-            umi_match_1 = read_seq[start_umi:end_umi]
+            # Find UMI starting from right flank reference-anchor sequence
+            reference_anchor_pos = read_sequence.find(self.umi_right_flank_sequence)
+            if reference_anchor_pos > 0:
+                umi_start_coord_right = reference_anchor_pos - self.umi_sequence_length
+                umi_end_coord_right = reference_anchor_pos
+                umi_right_sequence = read_sequence[
+                    umi_start_coord_right:umi_end_coord_right
+                ]
 
-        # Find UMI starting from upstream (left) reference-anchor sequence (UMI has length 12)
-        reference_upstream = read_seq.find("GATATTGC")
-        if reference_upstream > 0:
-            start_umi = reference_upstream + 8  # add length of searched anchor
-            end_umi = reference_upstream + 20  # add length of anchor + length of UMI
-            umi_match_2 = read_seq[start_umi:end_umi]
+            return umi_left_sequence, umi_right_sequence
 
-        # Compare identified UMIs
-        if umi_match_1 == umi_match_2:
-            umi = umi_match_1
-        elif umi_match_1 != "":
-            umi = umi_match_1
-        elif umi_match_2 != "":
-            umi = umi_match_2
-        else:
-            umi = "NNNNNNNNNNNN"
+        # Find UMI sequence
+        umi_sequence = None
+        umi_left_sequence, umi_right_sequence = _get_umi_sequences(
+            self.flanking_nucleotide_length
+        )
 
-        # Find if the tracer sequence exists in the read ###########################################################################
-        read_tracer_sequence = ""
+
+        if umi_left_sequence == umi_right_sequence and umi_left_sequence is not None:
+            umi_sequence = umi_left_sequence
+        elif umi_left_sequence is not None:
+            umi_sequence = umi_left_sequence
+        elif umi_right_sequence is not None:
+            umi_sequence = umi_right_sequence
+
+        # Find tracer sequence
+        read_tracer_sequence = None
 
         # Search for a direct match to one of the tracer sequences
         for tracer_sequence in self.tracers:
-            if read_seq.find(tracer_sequence) > 0:
+            tracer_start_coord = read_sequence.find(tracer_sequence)
+            if tracer_start_coord > 0:
                 read_tracer_sequence = tracer_sequence
                 break
 
-        # No direct match: find the tracer sequence  starting from downstream (right) reference-anchor sequence (sample-tracer has length 16)
-        if read_tracer_sequence == "":
-            reference_anchor_pos = read_seq.find("GCGTAACA")
+        # No direct match: find the tracer sequence starting from right flank reference-anchor sequence
+        if read_tracer_sequence is None:
+            reference_anchor_pos = read_sequence.find(self.tracer_right_flank_sequence)
             best_match = 9999
             if reference_anchor_pos > 0:
-                start_eid = (
-                    reference_anchor_pos - 16
-                )  # add length of searched sample-tracer
-                end_eid = (
-                    reference_anchor_pos  # keep as is: last base in range is excluded!
-                )
-                potential_tracer = read_seq[start_eid:end_eid]
+                start_eid = reference_anchor_pos - self.tracer_sequence_length
+                end_eid = reference_anchor_pos
+
+                potential_tracer = read_sequence[start_eid:end_eid]
                 for tracer_sequence in self.tracers:
                     dist = distance(tracer_sequence, potential_tracer)
                     if dist < 4 and dist < best_match:
                         read_tracer_sequence = tracer_sequence
                         best_match = dist
 
-        # No downstream match: find sample-tracer starting from upstream (left) reference-anchor sequence (sample-tracer has length 16)
-        if read_tracer_sequence == "":
-            reference_anchor_pos = read_seq.find("CACCATAC")
+        # No right flank match: find sample-tracer starting from left flank reference-anchor sequence
+        if read_tracer_sequence is None:
+            reference_anchor_pos = read_sequence.find(self.tracer_left_flank_sequence)
             best_match = 9999
             if reference_anchor_pos > 0:
-                start_eid = reference_anchor_pos + 8  # add length of searched anchor
+                start_eid = reference_anchor_pos + self.flanking_nucleotide_length
                 end_eid = (
-                    reference_anchor_pos + 24
-                )  # add length of anchor + length of sample-tracer
-                potential_tracer = read_seq[start_eid:end_eid]
+                    reference_anchor_pos
+                    + self.flanking_nucleotide_length
+                    + self.tracer_sequence_length
+                )
+
+                potential_tracer = read_sequence[start_eid:end_eid]
                 for tracer_sequence in self.tracers:
                     dist = distance(tracer_sequence, potential_tracer)
                     if dist < 4 and dist < best_match:
@@ -120,19 +207,15 @@ class TracerAssignment:
                         best_match = dist
 
         # Tracer statistics
-        if read_tracer_sequence != "":
-
+        if read_tracer_sequence is not None and umi_sequence is not None:
             # Add or update UMI counts
-            if umi in self.tracers[read_tracer_sequence]:
-                self.tracers[read_tracer_sequence][umi] += 1
+            if umi_sequence in self.tracers[read_tracer_sequence]:
+                self.tracers[read_tracer_sequence][umi_sequence] += 1
             else:
-                self.tracers[read_tracer_sequence].update({umi: 1})
+                self.tracers[read_tracer_sequence].update({umi_sequence: 1})
 
             # Add or update sample tracer counts
-            if read_tracer_sequence in self.tracer_frequency:
-                self.tracer_frequency[read_tracer_sequence] += 1
-            else:
-                self.tracer_frequency[read_tracer_sequence] = 1
+            self.tracer_frequency[read_tracer_sequence] += 1
 
 
 """
