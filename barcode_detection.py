@@ -40,7 +40,7 @@ def main(args):
     if output_umi_counts:
         with open(output_umi_counts, "w+") as f:
             f.write("lab_tracer_id\tumi_sequence\tcount\n")
-            for tracer, umis in tracer_assignments.tracers.items():
+            for tracer_sequence, umis in tracer_assignments.tracers.items():
                 tracer_id = tracer_assignments.tracer_sequence_to_id[tracer_sequence]
                 for umi_sequence, count in umis.items():
                     f.write("{}\t{}\t{}\n".format(tracer_id, umi_sequence, count))
