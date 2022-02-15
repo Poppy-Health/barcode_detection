@@ -13,7 +13,9 @@ def main(args):
     output_tracer_counts = args.output_tracer_counts
     output_umi_counts = args.output_umi_counts
 
-    tracer_assignments = read_parser.TracerAssignment(fasta_file, template_idt_file, tracer_info_file)
+    tracer_assignments = read_parser.TracerAssignment(
+        fasta_file, template_idt_file, tracer_info_file
+    )
 
     # Output Tracer and UMI frequency
     with open(args.output_tracer_counts, "w+") as f:
@@ -44,12 +46,10 @@ def main(args):
                     f.write("{}\t{}\t{}\n".format(tracer_id, umi_sequence, count))
 
 
-
 if __name__ == "__main__":
     argument_parser = ArgumentParser(
         description="Identify unique molecular barcodes in sequences aligning to a backbone template"
     )
-
 
     argument_parser.add_argument(
         "-s",
@@ -98,7 +98,7 @@ if __name__ == "__main__":
         "--output_umi_counts",
         type=str,
         required=False,
-        help="Output TSV file to write UMI sequence and counts for each tracer to (columns lab_tracer_id, umi_sequence, count)"
+        help="Output TSV file to write UMI sequence and counts for each tracer to (columns lab_tracer_id, umi_sequence, count)",
     )
 
     args = argument_parser.parse_args()
